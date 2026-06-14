@@ -21,9 +21,23 @@
 
 ---
 
+## 📸 Previews
+
+<div align="center">
+  <img src="docs/screenshots/01-dashboard.png" width="49%" alt="Executive Dashboard" />
+  <img src="docs/screenshots/02-content-studio.png" width="49%" alt="AI Content Studio" />
+  <br/>
+  <br/>
+  <img src="docs/screenshots/03-inbox.png" width="49%" alt="Unified Inbox" />
+  <img src="docs/screenshots/04-orders.png" width="49%" alt="Order Management" />
+</div>
+
+---
+
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Previews](#-previews)
 - [Features](#-features)
 - [Tech Stack](#-tech-stack)
 - [Quick Start](#-quick-start)
