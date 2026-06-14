@@ -1,0 +1,488 @@
+// ShopPilot AI — Production Schema
+// Covers all 7 core modules: Content Studio, Inbox, Orders, Inventory, Resellers, Copilot, Dashboard
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// IDENTITY & MULTI-TENANCY
+// ============================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  avatarUrl     String?
+  preferredLang String    @default("bn") // "bn" | "en"
+  role          String    @default("OWNER") // OWNER | STAFF | RESELLER
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  business      Business? @relation("BusinessOwner")
+  staffOf       Business? @relation("BusinessStaff", fields: [staffOfId], references: [id])
+  staffOfId     String?
+  orders        Order[]   @relation("OrderAssignee")
+  conversations Conversation[]
+  resellerProfile Reseller?
+  aiUsage       AIUsageLog[]
+}
+
+model Business {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  industry        String   @default("fashion") // fashion | beauty | electronics | grocery | other
+  language        String   @default("bn")
+  currency        String   @default("BDT")
+  city            String?
+  ownerId         String   @unique
+  owner           User     @relation("BusinessOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  staff           User[]   @relation("BusinessStaff")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products        Product[]
+  customers       Customer[]
+  orders          Order[]
+  conversations   Conversation[]
+  resellers       Reseller[]
+  contentPosts    ContentPost[]
+  shipments       Shipment[]
+  payments        Payment[]
+  insights        Insight[]
+  aiUsage         AIUsageLog[]
+  auditLogs       AuditLog[]
+}
+
+// ============================================================
+// MODULE D: INVENTORY
+// ============================================================
+
+model Product {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sku             String?
+  name            String
+  nameBn          String?
+  description     String?
+  descriptionBn   String?
+  category        String?
+  price           Float
+  cost            Float    @default(0)
+  costPrice       Float    @default(0)
+  stock           Int      @default(0)
+  lowStockAt      Int      @default(5)
+  imageUrl        String?
+  images          String?  // JSON array
+  variants        String?  // JSON: [{name, options:[...]}]
+  status          String   @default("active") // active | draft | archived
+  active          Boolean  @default(true)
+  tags            String?  // comma-separated
+  title           String?  // optional display title for content posts
+  // AI generated
+  aiDescription   String?
+  aiSeoKeywords   String?  // comma-separated
+  // Forecasting
+  avgDailySales   Float    @default(0)
+  last30dSales    Int      @default(0)
+  forecast30d     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  orderItems      OrderItem[]
+  resellerProducts ResellerProduct[]
+  stockMovements  StockMovement[]
+
+  @@index([businessId])
+  @@index([category])
+  @@index([status])
+}
+
+model StockMovement {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type        String   // IN | OUT | ADJUST | RETURN
+  quantity    Int
+  reason      String?
+  reference   String?  // orderId | manual
+  createdAt   DateTime @default(now())
+
+  @@index([productId])
+}
+
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
+model Customer {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name            String
+  phone           String
+  whatsappPhone   String?
+  facebookId      String?
+  messengerId     String?
+  email           String?
+  address         String?
+  city            String?
+  area            String?  // e.g., Dhanmondi, Gulshan
+  // Analytics
+  totalOrders     Int      @default(0)
+  totalSpent      Float    @default(0)
+  lastOrderAt     DateTime?
+  tags            String?  // comma-separated
+  notes           String?
+  language        String   @default("bn")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  orders          Order[]
+  conversations   Conversation[]
+
+  @@unique([businessId, phone])
+  @@index([businessId])
+}
+
+// ============================================================
+// MODULE B: UNIFIED COMMERCE INBOX
+// ============================================================
+
+model Conversation {
+  id          String    @id @default(cuid())
+  businessId  String
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channel     String    @default("messenger") // messenger | whatsapp | facebook_comment | live_chat
+  status      String    @default("open") // open | snoozed | resolved
+  assigneeId  String?
+  assignee    User?     @relation(fields: [assigneeId], references: [id])
+  // AI
+  aiSummary       String?
+  aiSentiment     String?    // positive | neutral | negative | urgent
+  aiIntent        String?    // inquiry | order | complaint | return | follow_up
+  extractedOrder  String?    // JSON: {items, total, address, ...}
+  unreadCount  Int       @default(0)
+  lastMessageAt DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  messages    Message[]
+
+  @@index([businessId, status])
+  @@index([customerId])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction       String   // inbound | outbound
+  senderType      String   // customer | agent | ai | system
+  senderId        String?
+  content         String
+  contentBn       String?  // Bangla translation
+  attachments     String?  // JSON
+  // AI generated metadata
+  aiSuggested     String?  // JSON: {replies, actions, intent, confidence}
+  // Reference
+  orderId         String?
+  productId       String?
+  createdAt       DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ============================================================
+// MODULE C: ORDER MANAGEMENT
+// ============================================================
+
+model Order {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderNumber     String   // human-readable e.g. SP-0001
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  channel         String?  // messenger | whatsapp | live | website
+  source          String   @default("inbox") // inbox | live | manual | reseller | website
+  paidAt          DateTime?
+  // Status
+  status          String   @default("new") // new | confirmed | packed | shipped | delivered | cancelled | returned
+  paymentStatus   String   @default("pending") // pending | partial | paid | refunded
+  paymentMethod   String   @default("cod") // cod | bkash | nagad | rocket | bank
+  fulfillmentStatus String @default("unfulfilled") // unfulfilled | packed | handed_to_courier | in_transit | delivered | returned
+  // Money
+  subtotal        Float
+  shippingCost    Float    @default(60)
+  discount        Float    @default(0)
+  total           Float
+  // Address
+  shippingName    String
+  shippingPhone   String
+  shippingAddress String
+  shippingCity    String
+  shippingArea    String?
+  // Assignment
+  assigneeId      String?
+  assignee        User?    @relation("OrderAssignee", fields: [assigneeId], references: [id])
+  resellerId      String?
+  reseller        Reseller? @relation(fields: [resellerId], references: [id])
+  // Courier
+  courierName     String?  // steadfast | pathao | redx | sundarban | manual
+  courierTracking String?
+  trackingCode    String?
+  // AI
+  aiRiskScore     Float?   // 0-1 chance of return/cancel
+  aiNotes         String?
+  // Source
+  notes           String?
+  // Refund
+  refundAmount    Float?
+  refundReason    String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  confirmedAt     DateTime?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  cancelledAt     DateTime?
+
+  items           OrderItem[]
+  shipment        Shipment?
+  payment         Payment?
+
+  @@unique([businessId, orderNumber])
+  @@index([businessId, status])
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product @relation(fields: [productId], references: [id])
+  productName String
+  sku         String?
+  variant     String?
+  unitPrice   Float
+  quantity    Int
+  total       Float
+
+  @@index([orderId])
+}
+
+model Shipment {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderId         String   @unique
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierName     String   // steadfast | pathao | redx
+  courierTracking String?
+  courierResponse String?  // raw API response
+  status          String   @default("created") // created | picked_up | in_transit | delivered | returned | failed
+  weight          Float?
+  codAmount       Float    @default(0)
+  deliveryCharge  Float    @default(0)
+  consignmentId   String?  // courier's ID
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderId         String?  @unique
+  order           Order?   @relation(fields: [orderId], references: [id])
+  method          String   // bkash | nagad | rocket | bank | cod | cash
+  direction       String   @default("in") // in | out
+  amount          Float
+  trxId           String?  // MFS transaction ID
+  transactionId   String?  // legacy alias
+  senderNumber    String?
+  status          String   @default("pending") // pending | success | failed | reconciled
+  notes           String?
+  reconciledAt    DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([businessId, method])
+  @@index([status])
+}
+
+// ============================================================
+// MODULE E: RESELLER MANAGEMENT
+// ============================================================
+
+model Reseller {
+  id              String   @id @default(cuid())
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId          String?  @unique
+  user            User?    @relation(fields: [userId], references: [id])
+  name            String
+  phone           String
+  email           String?
+  address         String?
+  city            String?
+  tier            String   @default("bronze") // bronze | silver | gold
+  status          String   @default("active") // active | inactive | suspended
+  // Commission
+  commissionType  String   @default("percentage") // percentage | fixed
+  commissionValue Float    @default(10)
+  commissionRate  Float    @default(10)
+  // Performance
+  totalOrders     Int      @default(0)
+  totalSales      Float    @default(0)
+  totalCommission Float    @default(0)
+  pendingPayout   Float    @default(0)
+  paidPayout      Float    @default(0)
+  lastOrderAt     DateTime?
+  // Onboarding
+  referralCode    String   @unique
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products        ResellerProduct[]
+  orders          Order[]
+  commissions     Commission[]
+
+  @@unique([businessId, phone])
+  @@index([businessId])
+}
+
+model ResellerProduct {
+  id          String   @id @default(cuid())
+  resellerId  String
+  reseller    Reseller @relation(fields: [resellerId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customPrice Float?
+
+  @@unique([resellerId, productId])
+}
+
+model Commission {
+  id          String   @id @default(cuid())
+  resellerId  String
+  reseller    Reseller @relation(fields: [resellerId], references: [id], onDelete: Cascade)
+  orderId     String?
+  amount      Float
+  rate        Float
+  type        String   @default("percentage")
+  status      String   @default("pending") // pending | approved | paid | reversed
+  payoutId    String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  approvedAt  DateTime?
+  paidAt      DateTime?
+
+  @@index([resellerId, status])
+}
+
+// ============================================================
+// MODULE A: AI CONTENT STUDIO
+// ============================================================
+
+model ContentPost {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type        String   // product_description | facebook_post | campaign | seo | translation
+  title       String?
+  platform    String?  // facebook | instagram | website | messenger
+  channel     String?  // facebook | instagram | website
+  prompt      String?
+  output      String
+  body        String?  // legacy alias for output
+  outputBn    String?
+  metadata    String?  // JSON: {tone, length, audience, ...}
+  // Publishing
+  status      String   @default("draft") // draft | scheduled | published
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  productId   String?
+  // AI metrics
+  tokensUsed  Int      @default(0)
+  modelUsed   String   @default("gpt-4o-mini")
+  createdAt   DateTime @default(now())
+
+  @@index([businessId, type])
+}
+
+// ============================================================
+// AI USAGE TRACKING
+// ============================================================
+
+model AIUsageLog {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  feature     String   // content | reply | insight | forecast | translate | extract
+  model       String   @default("mock")
+  tokensIn    Int      @default(0)
+  tokensOut   Int      @default(0)
+  cost        Float    @default(0)
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  @@index([businessId, feature])
+  @@index([createdAt])
+}
+
+// ============================================================
+// MODULE F: BUSINESS COPILOT INSIGHTS
+// ============================================================
+
+model Insight {
+  id          String   @id @default(cuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  type        String   // sales | inventory | customer | ops | opportunity | alert
+  title       String
+  body        String
+  priority    String   @default("medium") // low | medium | high | urgent
+  severity    String   @default("medium") // low | medium | high | urgent
+  data        String?  // JSON payload
+  isRead      Boolean  @default(false)
+  isActedOn   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime?
+
+  @@index([businessId, isRead])
+  @@index([priority])
+}
+
+// ============================================================
+// SECURITY & AUDIT
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  businessId  String?
+  business    Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  userId      String?
+  action      String   // see AuditAction union in src/lib/security.ts
+  meta        String?  // JSON
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([action, createdAt])
+}
